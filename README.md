@@ -325,3 +325,9 @@ If you find this project useful for your research, please consider citing:
 	note={GitHub repository}
 }
 ```
+
+## Local ComfyUI compatibility
+
+This branch includes locally validated XL-SFT fixes for the ComfyUI
+Transformers 5 / ROCm environment. See [COMFYUI_COMPAT.md](COMFYUI_COMPAT.md)
+for the changes, runtime versions, validation scope and linked workflow nodes.

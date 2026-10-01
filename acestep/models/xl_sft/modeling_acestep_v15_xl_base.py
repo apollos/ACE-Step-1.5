@@ -578,6 +578,22 @@ class AceStepPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, Qwen3RMSNorm):
             module.weight.data.fill_(1.0)
+        elif isinstance(module, Qwen3RotaryEmbedding):
+            # Transformers 5 materializes non-persistent RoPE buffers empty.
+            # Its base initializer reconstructs both frequency buffers.
+            super()._init_weights(module)
+        elif isinstance(module, ResidualFSQ):
+            # FSQ constants are not in the checkpoint. Rebuild their values
+            # after meta loading, preserving all learned projection weights.
+            with torch.random.fork_rng(devices=[]), torch.device("cpu"):
+                reference = ResidualFSQ(
+                    dim=self.config.fsq_dim,
+                    levels=self.config.fsq_input_levels,
+                    num_quantizers=self.config.fsq_input_num_quantizers,
+                )
+            for name, value in reference.named_buffers():
+                destination = module.get_buffer(name)
+                destination.copy_(value.to(destination))
 
 
 class AceStepLyricEncoder(AceStepPreTrainedModel):
@@ -1205,11 +1221,15 @@ class AceStepAudioTokenizer(AceStepPreTrainedModel):
         # Pool patches into sequence-level representations
         self.attention_pooler = AttentionPooler(config)
         # Quantize continuous representations into discrete tokens
-        self.quantizer = ResidualFSQ(
-            dim=config.fsq_dim,
-            levels=config.fsq_input_levels,
-            num_quantizers=config.fsq_input_num_quantizers
-        )
+        # ResidualFSQ evaluates tensor values and builds non-persistent buffers.
+        # Materialize this small module even under Transformers' meta init.
+        # The normal model.to(device) call moves it for inference afterwards.
+        with torch.device("cpu"):
+            self.quantizer = ResidualFSQ(
+                dim=config.fsq_dim,
+                levels=config.fsq_input_levels,
+                num_quantizers=config.fsq_input_num_quantizers
+            )
         self.pool_window_size = config.pool_window_size
         # Initialize weights and apply final processing
         self.post_init()
